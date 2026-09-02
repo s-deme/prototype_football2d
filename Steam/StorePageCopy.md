@@ -73,6 +73,7 @@ BLAZE、FROST、ECLIPSEが待つアーケードカップを勝ち抜きましょ
 - Add after dashboard configuration and verification: Steam Cloud
 - Interface: English and Japanese; no voiced dialogue or subtitles
 - Mature content: None
+- Support: https://github.com/s-deme/prototype_football2d/issues
 
 ## Provisional Windows system requirements
 
@@ -86,6 +87,8 @@ These values are conservative release-page placeholders and must be confirmed on
 | Graphics | DirectX 10-capable GPU | DirectX 11-capable GPU |
 | DirectX | Version 10 | Version 11 |
 | Storage | 200 MB available space | 200 MB available space |
+
+Minimum supported viewport: 1024×576.
 
 ## Screenshot alt text
 
@@ -102,4 +105,5 @@ These values are conservative release-page placeholders and must be confirmed on
 - [ ] Run the final build on representative minimum-spec hardware and replace the provisional system requirements with measured values.
 - [ ] After App ID and Depot ID assignment, create the [SteamPipe build scripts](https://partner.steamgames.com/doc/sdk/uploading), upload to a password-protected test branch, install through Steam, and verify `SparkStrikers.exe` as the launch option.
 - [ ] Configure [Steam Auto-Cloud](https://partner.steamgames.com/doc/features/cloud): `WinAppDataLocalLow`, `Spark Strikers/Spark Strikers`, `progress.sav`, Windows, non-recursive; publish it and verify upload/download on two PCs.
+- [ ] Confirm and archive the commercial-distribution evidence requested by `AssetProvenance.md` for the icon and three Steam key-art masters.
 - [ ] Submit the store page first and then the default-branch build for [Valve review](https://partner.steamgames.com/doc/store/Review_Process) at least seven business days before the intended release.

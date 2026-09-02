@@ -12,6 +12,8 @@ namespace SparkStrikers
         const float GoalHalfHeight = 1.45f;
         const float MatchLength = 75f;
         const int StandardRivalCount = 3;
+        const int MinimumWindowWidth = 1024;
+        const int MinimumWindowHeight = 576;
 
         static readonly KeyCode[] SecretCode =
         {
@@ -122,6 +124,7 @@ namespace SparkStrikers
         bool flashEnabled;
         bool highContrast;
         bool japanese;
+        bool saveFailed;
         GameDifficulty difficulty;
         bool menuVerticalReady = true;
         bool menuHorizontalReady = true;
@@ -178,6 +181,7 @@ namespace SparkStrikers
             string[] arguments = System.Environment.GetCommandLineArgs();
             int screenshotArgument = System.Array.IndexOf(arguments, "--capture-proof");
             automationRun = screenshotArgument >= 0 || System.Array.IndexOf(arguments, "-smoke-test") >= 0;
+            Application.runInBackground = automationRun;
             progressPath = Path.Combine(automationRun ? Application.temporaryCachePath : Application.persistentDataPath,
                 automationRun ? "spark-strikers-automation-progress.sav" : "progress.sav");
             if (automationRun) DeleteAutomationProgress();
@@ -266,6 +270,7 @@ namespace SparkStrikers
                 }
                 if (System.Array.IndexOf(arguments, "--capture-quit-confirmation") >= 0)
                     RequestConfirmation(ConfirmAction.Quit);
+                if (System.Array.IndexOf(arguments, "--capture-save-error") >= 0) saveFailed = true;
                 if (System.Array.IndexOf(arguments, "--capture-special") >= 0) StartCoroutine(LaunchCaptureSpecial());
                 if (System.Array.IndexOf(arguments, "--capture-rival-special") >= 0) StartCoroutine(LaunchCaptureRivalSpecial());
                 if (System.Array.IndexOf(arguments, "--capture-goal") >= 0) StartCoroutine(LaunchCaptureGoal());
@@ -324,6 +329,16 @@ namespace SparkStrikers
                 throw new System.InvalidOperationException("Runtime smoke progress backup recovery failed.");
             if (!TryLoadProgress(progressPath) || !TryLoadProgress(progressPath + ".bak"))
                 throw new System.InvalidOperationException("Runtime smoke progress self-repair failed.");
+            string validProgressPath = progressPath;
+            string blockerPath = progressPath + ".blocked";
+            File.WriteAllText(blockerPath, "block");
+            progressPath = Path.Combine(blockerPath, "progress.sav");
+            SaveProgress();
+            if (!saveFailed) throw new System.InvalidOperationException("Runtime smoke save failure was not reported.");
+            progressPath = validProgressPath;
+            File.Delete(blockerPath);
+            SaveProgress();
+            if (saveFailed) throw new System.InvalidOperationException("Runtime smoke save recovery did not clear the warning.");
             StartCup();
             if (cup.RoundCount != RivalNames.Length)
                 throw new System.InvalidOperationException("Runtime smoke hidden rival cup failed.");
@@ -434,6 +449,10 @@ namespace SparkStrikers
 
         void Update()
         {
+            if (Screen.fullScreenMode == FullScreenMode.Windowed &&
+                (Screen.width < MinimumWindowWidth || Screen.height < MinimumWindowHeight))
+                Screen.SetResolution(Mathf.Max(Screen.width, MinimumWindowWidth), Mathf.Max(Screen.height, MinimumWindowHeight), FullScreenMode.Windowed);
+
             float unscaledDelta = Time.unscaledDeltaTime;
             ambienceSource.volume = masterVolume * (rules.Phase == MatchPhase.Title || rules.Phase == MatchPhase.Paused ? 0.08f : 0.16f);
             flash = Mathf.Max(0f, flash - unscaledDelta * 2.8f);
@@ -543,6 +562,7 @@ namespace SparkStrikers
                 DrawRect(new Rect(0f, 0f, 1920f, 1080f), new Color(1f, 0.95f, 0.55f, flash * 0.38f));
             GUI.enabled = previousEnabled;
             if (confirmationOpen) DrawConfirmation();
+            if (saveFailed) DrawSaveWarning();
         }
 
         void BuildAssets()
@@ -924,9 +944,11 @@ namespace SparkStrikers
                 });
                 if (File.Exists(progressPath)) File.Replace(temporaryPath, progressPath, progressPath + ".bak");
                 else File.Move(temporaryPath, progressPath);
+                saveFailed = false;
             }
             catch (System.Exception exception)
             {
+                saveFailed = true;
                 Debug.LogError("Could not save progress: " + exception.Message);
             }
         }
@@ -1753,7 +1775,7 @@ namespace SparkStrikers
             buttonStyle.padding = new RectOffset(20, 20, 10, 10);
             hudStyle = NewStyle(38, TextAnchor.MiddleCenter, FontStyle.Bold, Color.white);
             hugeStyle = NewStyle(72, TextAnchor.MiddleCenter, FontStyle.Bold, Color.white);
-            smallStyle = NewStyle(20, TextAnchor.MiddleCenter, FontStyle.Normal, new Color(0.82f, 0.9f, 0.95f));
+            smallStyle = NewStyle(24, TextAnchor.MiddleCenter, FontStyle.Normal, new Color(0.82f, 0.9f, 0.95f));
         }
 
         GUIStyle NewStyle(int size, TextAnchor anchor, FontStyle style, Color color)
@@ -1833,7 +1855,7 @@ namespace SparkStrikers
         {
             GUI.Label(new Rect(350f, 150f, 1220f, 80f), T("SETTINGS", "設定"), headingStyle);
             if (menuIndex == 0) DrawRect(new Rect(500f, 250f, 920f, 68f), new Color(homeColor.r, homeColor.g, homeColor.b, 0.45f));
-            GUI.Label(new Rect(530f, 260f, 300f, 55f), T("MASTER VOLUME", "マスター音量"), bodyStyle);
+            GUI.Label(new Rect(530f, 260f, 330f, 55f), (menuIndex == 0 ? ">  " : string.Empty) + T("MASTER VOLUME", "マスター音量"), bodyStyle);
             float newVolume = GUI.HorizontalSlider(new Rect(870f, 275f, 430f, 28f), masterVolume, 0f, 1f);
             if (!Mathf.Approximately(newVolume, masterVolume))
             {
@@ -1931,7 +1953,8 @@ namespace SparkStrikers
             string heading = confirmAction == ConfirmAction.Quit ? T("QUIT GAME?", "ゲームを終了しますか？") :
                 confirmAction == ConfirmAction.RestartMatch ? T("RESTART MATCH?", "試合をやり直しますか？") :
                 T("RETURN TO TITLE?", "タイトルにもどりますか？");
-            string detail = confirmAction == ConfirmAction.Quit ? T("Your progress is saved automatically.", "進行状況は自動保存されています。") :
+            string detail = confirmAction == ConfirmAction.Quit ?
+                (saveFailed ? T("Progress could not be saved. Quitting may lose progress.", "進行状況を保存できませんでした。終了すると失われる可能性があります。") : T("Your progress is saved automatically.", "進行状況は自動保存されています。")) :
                 T("Current match progress will be lost.", "現在の試合状況は失われます。");
             string confirm = confirmAction == ConfirmAction.Quit ? T("YES — QUIT", "はい — 終了") :
                 confirmAction == ConfirmAction.RestartMatch ? T("YES — RESTART", "はい — やり直す") :
@@ -1996,7 +2019,14 @@ namespace SparkStrikers
         bool DrawButton(Rect rect, string label, bool highlighted)
         {
             DrawRect(rect, highlighted ? homeColor : new Color(0.08f, 0.13f, 0.23f));
-            return GUI.Button(rect, label, buttonStyle);
+            return GUI.Button(rect, (highlighted ? ">  " : string.Empty) + label, buttonStyle);
+        }
+
+        void DrawSaveWarning()
+        {
+            Rect rect = new Rect(24f, 24f, 620f, 58f);
+            DrawRect(rect, new Color(0.48f, 0.055f, 0.035f, 0.98f));
+            GUI.Label(rect, T("!  PROGRESS NOT SAVED", "!  進行状況を保存できません"), smallStyle);
         }
 
         void DrawRect(Rect rect, Color color)

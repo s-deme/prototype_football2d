@@ -25,6 +25,7 @@ Art, effects, and the looping stadium ambience are generated in-game. The includ
 | Pause | Esc | Menu |
 
 Menus support the keyboard or left stick, with A to confirm and B to go back.
+Windowed play maintains a minimum 1024×576 viewport so menus and HUD text remain readable.
 
 Quit, restart-match, and mid-match return-to-title actions use a confirmation screen that defaults to cancel.
 Active matches pause automatically when the game loses focus; returning to the window never resumes play without input.
@@ -68,6 +69,13 @@ The default Mono output is `Builds/Windows/SparkStrikers.exe`. Set `SPARK_BUILD_
 
 For Steam Auto-Cloud, sync `progress.sav` from root `WinAppDataLocalLow`, subdirectory `Spark Strikers/Spark Strikers`, Windows OS, non-recursive. Display and audio settings remain local in PlayerPrefs so machine-specific preferences are not clouded.
 Progress saves use atomic replacement and a validated backup; a damaged primary save repairs itself from that backup on startup.
+If progress cannot be written, the game displays a persistent warning instead of silently claiming that the save succeeded.
+
+## Support
+
+Report problems through the [GitHub issue tracker](https://github.com/s-deme/prototype_football2d/issues). Include the game version shown on the title screen, reproduction steps, and the Windows player log from `%USERPROFILE%\AppData\LocalLow\Spark Strikers\Spark Strikers\Player.log`.
+
+Asset origins and release-rights status are tracked in [`AssetProvenance.md`](AssetProvenance.md).
 
 `Steam/StoreAssets/Screenshots` contains five gameplay-only 1920×1080 captures ready for the Steam store screenshot section.
 
