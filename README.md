@@ -1,6 +1,6 @@
 # Spark Strikers
 
-Working-title Unity 2D arcade football game for a future Steam release. A three-rival Arcade Cup combines quick passing, charge shots, escalating AI, rival-specific special moves, procedural sound, persistent records, English/Japanese UI, and unlockable secrets—including a hidden fourth challenger after the first championship.
+Working-title Unity 2D arcade football game for a future Steam release. A no-fouls three-rival Arcade Cup combines rough hits, knockdowns, loose-ball scrambles, quick passing, charge shots, escalating AI, rival-specific special moves, procedural sound, persistent records, English/Japanese UI, and unlockable secrets—including a hidden fourth challenger after the first championship.
 
 ![Title screen](Screenshots/title-1280x720.png)
 
@@ -18,7 +18,7 @@ Art, effects, and the looping stadium ambience are generated in-game. The includ
 | --- | --- | --- |
 | Move | WASD / arrows | Left stick |
 | Shoot | Hold and release Z / Space | A |
-| Pass | X | X |
+| Pass / rough hit (without the ball) | X | X |
 | Dash / tackle | Shift | B |
 | Switch player | Q | LB |
 | Special | C | Y |
@@ -26,6 +26,8 @@ Art, effects, and the looping stadium ambience are generated in-game. The includ
 
 Menus support the keyboard or left stick, with A to confirm and B to go back.
 Windowed play maintains a minimum 1024×576 viewport so menus and HUD text remain readable.
+
+There are no fouls: a rough hit or running tackle briefly knocks its target down and spills a carried ball. Successful hits also charge the attacker's special meter, so fighting for space is part of the scoring strategy.
 
 Quit, restart-match, and mid-match return-to-title actions use a confirmation screen that defaults to cancel.
 Active matches pause automatically when the game loses focus; returning to the window never resumes play without input.

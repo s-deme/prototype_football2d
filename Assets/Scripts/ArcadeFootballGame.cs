@@ -49,6 +49,7 @@ namespace SparkStrikers
             public float DecisionTimer;
             public float StealCooldown;
             public float SlowTimer;
+            public float DownTimer;
         }
 
         sealed class BallState
@@ -370,6 +371,16 @@ namespace SparkStrikers
             if (rules.Phase != MatchPhase.Kickoff)
                 throw new System.InvalidOperationException("Runtime smoke confirmed restart failed.");
             rules.StartPlay();
+            Footballer tackler = home[0];
+            Footballer victim = away[0];
+            tackler.Position = Vector2.zero;
+            victim.Position = Vector2.right * 0.5f;
+            TakePossession(victim);
+            LandRoughHit(tackler, victim);
+            SyncVisuals();
+            if (victim.DownTimer <= 0f || ball.Owner != null || ball.Velocity.sqrMagnitude <= 0f || rules.SpecialMeter <= 0f)
+                throw new System.InvalidOperationException("Runtime smoke rough hit failed.");
+            ResetPositions();
             Footballer previous = controlled;
             SwitchControlledPlayer();
             if (controlled == previous) throw new System.InvalidOperationException("Runtime smoke did not switch players.");
@@ -982,6 +993,7 @@ namespace SparkStrikers
                 player.DecisionTimer = UnityEngine.Random.Range(0.2f, 0.8f);
                 player.StealCooldown = 0f;
                 player.SlowTimer = 0f;
+                player.DownTimer = 0f;
             }
 
             if (ball != null)
@@ -1060,8 +1072,11 @@ namespace SparkStrikers
             if (!ownsBall && !shootHeld) shotCharge = 0f;
             shootWasHeld = shootHeld;
 
-            if (ownsBall && (Input.GetKeyDown(KeyCode.X) || Input.GetKeyDown(KeyCode.JoystickButton2)))
-                PassBall(controlled);
+            if (Input.GetKeyDown(KeyCode.X) || Input.GetKeyDown(KeyCode.JoystickButton2))
+            {
+                if (ownsBall) PassBall(controlled);
+                else TryRoughHit(controlled);
+            }
 
             if (ownsBall && (Input.GetKeyDown(KeyCode.C) || Input.GetKeyDown(KeyCode.JoystickButton3)) && rules.SpendSpecial())
                 KickBall(controlled, AimDirection(controlled, input), 16.5f, true);
@@ -1070,7 +1085,13 @@ namespace SparkStrikers
         void SwitchControlledPlayer()
         {
             int currentIndex = Mathf.Max(0, home.IndexOf(controlled));
-            controlled = home[(currentIndex + 1) % home.Count];
+            for (int step = 1; step <= home.Count; step++)
+            {
+                Footballer candidate = home[(currentIndex + step) % home.Count];
+                if (candidate.DownTimer > 0f) continue;
+                controlled = candidate;
+                break;
+            }
             manualControlLock = 1.2f;
             selectTimer = 0.12f;
         }
@@ -1092,6 +1113,7 @@ namespace SparkStrikers
 
         void MovePlayer(Footballer player, Vector2 direction, float speed, float delta)
         {
+            if (player.DownTimer > 0f) direction = Vector2.zero;
             if (direction.sqrMagnitude > 0.02f) player.Facing = direction.normalized;
             if (player.SlowTimer > 0f) speed *= 0.55f;
             Vector2 targetVelocity = direction * speed;
@@ -1111,7 +1133,13 @@ namespace SparkStrikers
                 player.DecisionTimer -= delta;
                 player.StealCooldown = Mathf.Max(0f, player.StealCooldown - delta);
                 player.SlowTimer = Mathf.Max(0f, player.SlowTimer - delta);
+                player.DownTimer = Mathf.Max(0f, player.DownTimer - delta);
                 if (player == controlled) continue;
+                if (player.DownTimer > 0f)
+                {
+                    MovePlayer(player, Vector2.zero, 0f, delta);
+                    continue;
+                }
 
                 bool chaser = player == (player.Home ? homeChaser : awayChaser);
                 Vector2 target;
@@ -1170,7 +1198,7 @@ namespace SparkStrikers
             float closestDistance = float.MaxValue;
             foreach (var player in team)
             {
-                if (player == exclude) continue;
+                if (player == exclude || player.DownTimer > 0f) continue;
                 float distance = (player.Position - target).sqrMagnitude;
                 if (distance >= closestDistance) continue;
                 closestDistance = distance;
@@ -1200,7 +1228,7 @@ namespace SparkStrikers
             {
                 ball.Position = ball.Owner.Position + ball.Owner.Facing * 0.48f;
                 ball.Velocity = ball.Owner.Velocity;
-                TryStealBall(ball.Owner);
+                TryTackleBallCarrier(ball.Owner);
             }
             else
             {
@@ -1316,13 +1344,14 @@ namespace SparkStrikers
                 if (ball.IsSpecial && ball.LastTouch != null && ball.LastTouch.Home != player.Home)
                 {
                     player.Position -= ball.Velocity.normalized * SpecialShotRules.Knockback(ball.SpecialKind);
+                    player.DownTimer = Mathf.Max(player.DownTimer, 0.55f);
                     if (SpecialShotRules.SlowsPlayers(ball.SpecialKind)) player.SlowTimer = 1.8f;
                     cameraShake = Mathf.Max(cameraShake, 0.12f);
                     SpawnBurst(player.Position, SpecialColor(ball.SpecialKind), 6, 0.2f);
                     continue;
                 }
 
-                if (ball.PickupLock <= 0f && ball.Velocity.magnitude < 10f)
+                if (player.DownTimer <= 0f && ball.PickupLock <= 0f && ball.Velocity.magnitude < 10f)
                 {
                     TakePossession(player);
                     return;
@@ -1334,28 +1363,82 @@ namespace SparkStrikers
             }
         }
 
-        void TryStealBall(Footballer owner)
+        void TryRoughHit(Footballer attacker)
+        {
+            if (attacker.DownTimer > 0f || attacker.StealCooldown > 0f) return;
+
+            attacker.StealCooldown = 0.42f;
+            Footballer victim = null;
+            float closestDistance = 1f;
+            foreach (Footballer candidate in attacker.Home ? away : home)
+            {
+                Vector2 offset = candidate.Position - attacker.Position;
+                float distance = offset.sqrMagnitude;
+                if (candidate.DownTimer > 0f || distance > closestDistance ||
+                    (distance > 0.001f && Vector2.Dot(attacker.Facing, offset.normalized) < 0.1f)) continue;
+                victim = candidate;
+                closestDistance = distance;
+            }
+
+            if (victim == null)
+            {
+                SpawnBurst(attacker.Position + attacker.Facing * 0.48f, Color.white, 3, 0.1f);
+                kickSound.Play(audioSource, masterVolume * 0.35f);
+                return;
+            }
+
+            LandRoughHit(attacker, victim);
+        }
+
+        void TryTackleBallCarrier(Footballer owner)
         {
             foreach (var challenger in everyone)
             {
-                if (challenger.Home == owner.Home || challenger.StealCooldown > 0f) continue;
+                if (challenger.Home == owner.Home || challenger.DownTimer > 0f || challenger.StealCooldown > 0f) continue;
                 if ((challenger.Position - owner.Position).sqrMagnitude > 0.42f) continue;
 
                 bool humanTackle = challenger == controlled &&
-                                   (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.JoystickButton1));
+                                   (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift) || Input.GetKey(KeyCode.JoystickButton1));
                 if (!humanTackle && challenger.Velocity.sqrMagnitude < 9f) continue;
 
-                challenger.StealCooldown = 0.9f;
-                owner.StealCooldown = 0.6f;
-                TakePossession(challenger);
-                cameraShake = Mathf.Max(cameraShake, 0.16f);
-                SpawnBurst(challenger.Position, Color.white, 7, 0.18f);
+                LandRoughHit(challenger, owner);
                 return;
             }
         }
 
+        void LandRoughHit(Footballer attacker, Footballer victim)
+        {
+            Vector2 direction = victim.Position - attacker.Position;
+            direction = direction.sqrMagnitude > 0.001f ? direction.normalized : attacker.Facing;
+            attacker.StealCooldown = Mathf.Max(attacker.StealCooldown, 0.48f);
+            victim.StealCooldown = Mathf.Max(victim.StealCooldown, 1.05f);
+            victim.DownTimer = Mathf.Max(victim.DownTimer, 0.9f);
+            victim.SlowTimer = 0f;
+            victim.Velocity = direction * 6.2f;
+
+            if (ball.Owner == victim)
+            {
+                ball.Owner = null;
+                ball.LastTouch = victim;
+                ball.Position = victim.Position + direction * 0.35f;
+                ball.Velocity = direction * 6.8f + Vector2.up * UnityEngine.Random.Range(-1.4f, 1.4f);
+                ball.PickupLock = 0.28f;
+                ball.SpecialKind = SpecialShotKind.None;
+                ball.Renderer.color = Color.white;
+            }
+
+            if (attacker.Home) rules.AddMeter(10f);
+            else rivalMeter = Mathf.Min(MatchRules.MaxMeter, rivalMeter + 10f * DifficultyRules.SpecialCharge(difficulty));
+            banner = attacker.Home ? T("ROUGH HIT!", "ラフヒット！") : T("RIVAL ROUGH HIT!", "相手のラフプレー！");
+            bannerTimer = 0.65f;
+            cameraShake = Mathf.Max(cameraShake, 0.28f);
+            SpawnBurst(victim.Position, Color.white, 10, 0.24f);
+            kickSound.Play(audioSource, masterVolume * 0.8f);
+        }
+
         void TakePossession(Footballer player)
         {
+            if (player.DownTimer > 0f) return;
             ball.Owner = player;
             ball.LastTouch = player;
             ball.Velocity = Vector2.zero;
@@ -1372,7 +1455,7 @@ namespace SparkStrikers
             float attack = player.Home ? 1f : -1f;
             foreach (var candidate in team)
             {
-                if (candidate == player) continue;
+                if (candidate == player || candidate.DownTimer > 0f) continue;
                 float score = candidate.Position.x * attack - Vector2.Distance(player.Position, candidate.Position) * 0.18f;
                 if (score <= bestScore) continue;
                 bestScore = score;
@@ -1476,7 +1559,11 @@ namespace SparkStrikers
             {
                 player.GameObject.transform.position = new Vector3(player.Position.x, player.Position.y, 0f);
                 Color teamColor = player.Home ? homeColor : awayColor;
-                player.Body.color = player.SlowTimer > 0f ? Color.Lerp(teamColor, new Color(0.5f, 1f, 1f), 0.55f) : teamColor;
+                bool down = player.DownTimer > 0f;
+                player.GameObject.transform.localScale = down ? new Vector3(0.82f, 0.34f, 1f) : Vector3.one * 0.72f;
+                player.Mark.text = down ? "×" : player.Home ? "S" : RivalMarks[activeRound];
+                player.Body.color = down ? Color.Lerp(teamColor, Color.black, 0.45f) :
+                    player.SlowTimer > 0f ? Color.Lerp(teamColor, new Color(0.5f, 1f, 1f), 0.55f) : teamColor;
             }
             ball.GameObject.transform.position = new Vector3(ball.Position.x, ball.Position.y, 0f);
             float pulse = ball.IsSpecial ? 1f + Mathf.Sin(Time.time * 24f) * 0.13f : 1f;
@@ -1835,19 +1922,19 @@ namespace SparkStrikers
             GUI.Label(new Rect(460f, 275f, 1000f, 390f),
                 T("MOVE       WASD / ARROWS / LEFT STICK\n" +
                   "SHOOT      HOLD Z OR SPACE / A, RELEASE TO FIRE\n" +
-                  "PASS       X / X BUTTON\n" +
-                  "DASH       SHIFT / B BUTTON\n" +
+                  "PASS / HIT X / X BUTTON (HIT WITHOUT THE BALL)\n" +
+                  "DASH / TACKLE  SHIFT / B BUTTON\n" +
                   "SWITCH     Q / LB (WHILE DEFENDING)\n" +
                   "SPECIAL    C / Y BUTTON WHEN THE SPARK METER IS FULL\n" +
                   "PAUSE      ESC / MENU BUTTON",
                   "移動　　　WASD / 矢印 / 左スティック\n" +
                   "シュート　Z または SPACE / Aを長押しして離す\n" +
-                  "パス　　　X / Xボタン\n" +
-                  "ダッシュ　SHIFT / Bボタン\n" +
+                  "パス / 攻撃　X / Xボタン（ボールなしで攻撃）\n" +
+                  "ダッシュ / タックル　SHIFT / Bボタン\n" +
                   "選手切替　Q / LB（守備中）\n" +
                   "必殺技　　SPARK METER満タン時に C / Y\n" +
                   "ポーズ　　ESC / MENUボタン"), bodyStyle);
-            GUI.Label(new Rect(420f, 680f, 1080f, 115f), T("Beat BLAZE, FROST and ECLIPSE to claim the Arcade Cup.\nTheir specials hit harder, slow players, or swerve through defense.\nPass, shoot and keep possession to charge your impossible shot.", "BLAZE、FROST、ECLIPSEを倒してアーケードカップをつかめ。\n相手ごとに、吹き飛ばし・鈍足・急カーブの必殺技が待っている。\nパス、シュート、ボール保持で必殺ゲージをためよう。"), centeredBodyStyle);
+            GUI.Label(new Rect(420f, 680f, 1080f, 115f), T("No fouls: rough hits knock players down and spill the ball.\nPass, shoot, keep possession, or land hits to charge your impossible shot.\nBeat BLAZE, FROST and ECLIPSE to claim the Arcade Cup.", "反則なし：ラフプレーで相手を倒し、ボールをこぼさせろ。\nパス、シュート、ボール保持、攻撃で必殺ゲージをためよう。\nBLAZE、FROST、ECLIPSEを倒してカップをつかめ。"), centeredBodyStyle);
             if (DrawButton(new Rect(710f, 820f, 500f, 68f), T("BACK", "もどる"), true)) BackToMainMenu();
         }
 
@@ -1903,7 +1990,7 @@ namespace SparkStrikers
             DrawMeter(new Rect(520f, 970f, 880f, 34f), rules.SpecialMeter / MatchRules.MaxMeter, homeColor, "SPARK METER");
             DrawMeter(new Rect(1510f, 180f, 280f, 22f), rivalMeter / MatchRules.MaxMeter, awayColor, T("RIVAL POWER", "相手ゲージ"));
             string playerSpecial = secretUnlocked ? "COMET BREAKER" : "STAR BREAKER";
-            GUI.Label(new Rect(510f, 1015f, 900f, 34f), rules.SpecialMeter >= MatchRules.MaxMeter ? playerSpecial + T(" READY — PRESS C / Y", " 発動可能 — C / Y") : T("Q / LB SWITCH   •   PASS + SHOOT + POSSESSION = POWER", "Q / LB 選手切替   •   パス + シュート + ボール保持 = ゲージ"), smallStyle);
+            GUI.Label(new Rect(510f, 1015f, 900f, 34f), rules.SpecialMeter >= MatchRules.MaxMeter ? playerSpecial + T(" READY — PRESS C / Y", " 発動可能 — C / Y") : T("X HIT   •   SHIFT TACKLE   •   ROUGH HITS = POWER", "X 攻撃   •   SHIFT タックル   •   ラフプレー = ゲージ"), smallStyle);
 
             if (shotCharge > 0f)
                 DrawMeter(new Rect(760f, 900f, 400f, 24f), shotCharge, new Color(1f, 0.85f, 0.2f), T("SHOT", "シュート"));
