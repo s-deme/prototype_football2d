@@ -152,9 +152,8 @@ namespace SparkStrikers
 
         public void Tick(float deltaSeconds)
         {
-            if (Phase != MatchPhase.Playing || deltaSeconds <= 0f)
+            if (Phase != MatchPhase.Playing || deltaSeconds <= 0f || IsGoldenGoal)
                 return;
-            if (IsGoldenGoal) return;
 
             SecondsRemaining = Math.Max(0f, SecondsRemaining - deltaSeconds);
             if (SecondsRemaining == 0f)
