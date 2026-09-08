@@ -41,6 +41,10 @@ Assert(hiddenCup.RecordResult(1, 0) == CupOutcome.Champion, "hidden rival win co
 
 Assert(SpecialShotRules.LaunchSpeed(SpecialShotKind.Star) > SpecialShotRules.LaunchSpeed(SpecialShotKind.Frost), "star is faster than frost");
 Assert(SpecialShotRules.Drag(SpecialShotKind.Blaze) == 0f, "blaze accelerates without drag");
+Assert(SpecialShotRules.LaunchSpeed(SpecialShotKind.Star) == 16.5f, "star keeps its launch speed");
+Assert(SpecialShotRules.Drag(SpecialShotKind.None) == 1.35f, "ordinary shots keep their drag");
+Assert(SpecialShotRules.LaunchSpeed((SpecialShotKind)99) == 0f, "unknown special has no launch speed");
+Assert(SpecialShotRules.Drag((SpecialShotKind)99) == 0.25f, "unknown special keeps fallback drag");
 Assert(SpecialShotRules.Knockback(SpecialShotKind.Blaze) > SpecialShotRules.Knockback(SpecialShotKind.Star), "blaze has extra knockback");
 Assert(SpecialShotRules.SlowsPlayers(SpecialShotKind.Frost), "frost slows defenders");
 Assert(SpecialShotRules.LaunchSpeed(SpecialShotKind.Nova) > SpecialShotRules.LaunchSpeed(SpecialShotKind.Star), "nova has the fastest launch");

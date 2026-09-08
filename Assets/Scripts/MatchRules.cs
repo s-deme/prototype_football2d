@@ -50,12 +50,13 @@ namespace SparkStrikers
         {
             switch (kind)
             {
+                case SpecialShotKind.Star: return 16.5f;
                 case SpecialShotKind.Comet: return 16.2f;
                 case SpecialShotKind.Blaze: return 16f;
                 case SpecialShotKind.Frost: return 14.8f;
                 case SpecialShotKind.Eclipse: return 15.5f;
                 case SpecialShotKind.Nova: return 17.2f;
-                default: return kind == SpecialShotKind.Star ? 16.5f : 0f;
+                default: return 0f;
             }
         }
 
@@ -63,11 +64,12 @@ namespace SparkStrikers
         {
             switch (kind)
             {
+                case SpecialShotKind.None: return 1.35f;
                 case SpecialShotKind.Blaze: return 0f;
                 case SpecialShotKind.Frost: return 0.6f;
                 case SpecialShotKind.Star: return 0.45f;
                 case SpecialShotKind.Nova: return 0.08f;
-                default: return kind == SpecialShotKind.None ? 1.35f : 0.25f;
+                default: return 0.25f;
             }
         }
 

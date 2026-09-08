@@ -293,6 +293,27 @@ namespace SparkStrikers
             if (MenuAxisStep(0.8f, ref axisReady) != 1 || MenuAxisStep(0.8f, ref axisReady) != 0 ||
                 MenuAxisStep(0f, ref axisReady) != 0 || MenuAxisStep(-0.8f, ref axisReady) != -1)
                 throw new System.InvalidOperationException("Runtime smoke menu axis edge detection failed.");
+            void CheckSettingToggle(ref bool value, string key)
+            {
+                bool original = value;
+                bool existed = PlayerPrefs.HasKey(key);
+                int saved = PlayerPrefs.GetInt(key);
+                try
+                {
+                    ToggleSetting(ref value, key);
+                    if (value == original || PlayerPrefs.GetInt(key, -1) != (value ? 1 : 0))
+                        throw new System.InvalidOperationException("Runtime smoke setting toggle failed: " + key);
+                }
+                finally
+                {
+                    value = original;
+                    if (existed) PlayerPrefs.SetInt(key, saved);
+                    else PlayerPrefs.DeleteKey(key);
+                }
+            }
+            CheckSettingToggle(ref shakeEnabled, "screen_shake");
+            CheckSettingToggle(ref flashEnabled, "flash_effects");
+            CheckSettingToggle(ref highContrast, "high_contrast");
             if (font == null || !font.HasCharacter('日'))
                 throw new System.InvalidOperationException("Runtime smoke Japanese font coverage failed.");
             if (string.IsNullOrWhiteSpace(Application.version))
@@ -352,24 +373,44 @@ namespace SparkStrikers
             OnApplicationFocus(true);
             if (rules.Phase != MatchPhase.Paused)
                 throw new System.InvalidOperationException("Runtime smoke focus regain resumed without input.");
-            rules.TogglePause();
-            RequestConfirmation(ConfirmAction.ReturnToTitle);
-            if (confirmIndex != 1) throw new System.InvalidOperationException("Runtime smoke confirmation default was not cancel.");
+            ActivatePauseMenu(1);
+            if (menuPage != MenuPage.Settings || menuIndex != 0 || rules.Phase != MatchPhase.Paused)
+                throw new System.InvalidOperationException("Runtime smoke pause settings selection failed.");
+            BackToMainMenu();
+            ActivatePauseMenu(0);
+            if (rules.Phase != MatchPhase.Playing)
+                throw new System.InvalidOperationException("Runtime smoke pause resume selection failed.");
+            ActivatePauseMenu(3);
+            if (confirmIndex != 1 || confirmAction != ConfirmAction.ReturnToTitle)
+                throw new System.InvalidOperationException("Runtime smoke confirmation default was not cancel.");
             CancelConfirmation();
             if (confirmAction != ConfirmAction.None || rules.Phase != MatchPhase.Playing)
                 throw new System.InvalidOperationException("Runtime smoke confirmation cancel failed.");
-            RequestConfirmation(ConfirmAction.ReturnToTitle);
+            ActivatePauseMenu(3);
             confirmIndex = 0;
             ExecuteConfirmedAction();
             if (rules.Phase != MatchPhase.Title)
                 throw new System.InvalidOperationException("Runtime smoke confirmed title return failed.");
-            StartCup();
+            ArcadeCup completedCup = cup;
+            cupOutcome = CupOutcome.Champion;
+            ActivateResultsMenu(0);
+            if (ReferenceEquals(cup, completedCup) || rules.Phase != MatchPhase.Kickoff)
+                throw new System.InvalidOperationException("Runtime smoke champion menu selection failed.");
             rules.StartPlay();
-            RequestConfirmation(ConfirmAction.RestartMatch);
+            ActivatePauseMenu(2);
+            if (confirmAction != ConfirmAction.RestartMatch)
+                throw new System.InvalidOperationException("Runtime smoke pause restart selection failed.");
             confirmIndex = 0;
             ExecuteConfirmedAction();
             if (rules.Phase != MatchPhase.Kickoff)
                 throw new System.InvalidOperationException("Runtime smoke confirmed restart failed.");
+            ArcadeCup currentCup = cup;
+            ActivateResultsMenu(1);
+            if (rules.Phase != MatchPhase.Title)
+                throw new System.InvalidOperationException("Runtime smoke results title selection failed.");
+            ActivateResultsMenu(0);
+            if (!ReferenceEquals(cup, currentCup) || rules.Phase != MatchPhase.Kickoff)
+                throw new System.InvalidOperationException("Runtime smoke retry menu selection failed.");
             rules.StartPlay();
             Footballer tackler = home[0];
             Footballer victim = away[0];
@@ -922,8 +963,7 @@ namespace SparkStrikers
             {
                 string temporaryPath = progressPath + ".tmp";
                 File.Copy(backupPath, temporaryPath, true);
-                if (File.Exists(progressPath)) File.Replace(temporaryPath, progressPath, null);
-                else File.Move(temporaryPath, progressPath);
+                CommitProgressFile(temporaryPath, null);
                 Debug.Log("Recovered primary progress file from backup.");
             }
             catch (System.Exception exception)
@@ -953,8 +993,7 @@ namespace SparkStrikers
                     "cups=" + cupsWon,
                     "best=" + bestRound
                 });
-                if (File.Exists(progressPath)) File.Replace(temporaryPath, progressPath, progressPath + ".bak");
-                else File.Move(temporaryPath, progressPath);
+                CommitProgressFile(temporaryPath, progressPath + ".bak");
                 saveFailed = false;
             }
             catch (System.Exception exception)
@@ -962,6 +1001,12 @@ namespace SparkStrikers
                 saveFailed = true;
                 Debug.LogError("Could not save progress: " + exception.Message);
             }
+        }
+
+        void CommitProgressFile(string temporaryPath, string backupPath)
+        {
+            if (File.Exists(progressPath)) File.Replace(temporaryPath, progressPath, backupPath);
+            else File.Move(temporaryPath, progressPath);
         }
 
         void DeleteAutomationProgress()
@@ -1057,7 +1102,7 @@ namespace SparkStrikers
 
             if (controlled == null) return;
             Vector2 input = ReadMoveInput();
-            bool dash = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift) || Input.GetKey(KeyCode.JoystickButton1);
+            bool dash = DashHeld();
             MovePlayer(controlled, input, dash ? 6.2f : 4.7f, delta);
 
             bool shootHeld = Input.GetKey(KeyCode.Z) || Input.GetKey(KeyCode.Space) || Input.GetKey(KeyCode.JoystickButton0);
@@ -1103,6 +1148,8 @@ namespace SparkStrikers
             Vector2 input = gamepad.sqrMagnitude > keyboard.sqrMagnitude ? gamepad : keyboard;
             return input.sqrMagnitude > 1f ? input.normalized : input;
         }
+
+        bool DashHeld() => Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift) || Input.GetKey(KeyCode.JoystickButton1);
 
         Vector2 AimDirection(Footballer player, Vector2 input)
         {
@@ -1250,8 +1297,7 @@ namespace SparkStrikers
                 }
                 if (ball.Velocity.magnitude < 6f)
                 {
-                    ball.SpecialKind = SpecialShotKind.None;
-                    ball.Renderer.color = Color.white;
+                    ClearSpecialShot();
                 }
             }
         }
@@ -1397,8 +1443,7 @@ namespace SparkStrikers
                 if (challenger.Home == owner.Home || challenger.DownTimer > 0f || challenger.StealCooldown > 0f) continue;
                 if ((challenger.Position - owner.Position).sqrMagnitude > 0.42f) continue;
 
-                bool humanTackle = challenger == controlled &&
-                                   (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift) || Input.GetKey(KeyCode.JoystickButton1));
+                bool humanTackle = challenger == controlled && DashHeld();
                 if (!humanTackle && challenger.Velocity.sqrMagnitude < 9f) continue;
 
                 LandRoughHit(challenger, owner);
@@ -1423,8 +1468,7 @@ namespace SparkStrikers
                 ball.Position = victim.Position + direction * 0.35f;
                 ball.Velocity = direction * 6.8f + Vector2.up * UnityEngine.Random.Range(-1.4f, 1.4f);
                 ball.PickupLock = 0.28f;
-                ball.SpecialKind = SpecialShotKind.None;
-                ball.Renderer.color = Color.white;
+                ClearSpecialShot();
             }
 
             if (attacker.Home) rules.AddMeter(10f);
@@ -1442,9 +1486,14 @@ namespace SparkStrikers
             ball.Owner = player;
             ball.LastTouch = player;
             ball.Velocity = Vector2.zero;
+            ClearSpecialShot();
+            if (player.Home) rules.AddMeter(1.5f);
+        }
+
+        void ClearSpecialShot()
+        {
             ball.SpecialKind = SpecialShotKind.None;
             ball.Renderer.color = Color.white;
-            if (player.Home) rules.AddMeter(1.5f);
         }
 
         void PassBall(Footballer player)
@@ -1618,8 +1667,7 @@ namespace SparkStrikers
 
             if (menuPage != MenuPage.Main)
             {
-                if (menuPage == MenuPage.Help &&
-                    (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.Space) || Input.GetKeyDown(KeyCode.JoystickButton0)))
+                if (menuPage == MenuPage.Help && ConfirmPressed())
                 {
                     BackToMainMenu();
                     return;
@@ -1633,8 +1681,7 @@ namespace SparkStrikers
             int menuMove = ReadMenuVertical();
             if (Input.GetKeyDown(KeyCode.DownArrow) || Input.GetKeyDown(KeyCode.S) || menuMove > 0) menuIndex = (menuIndex + 1) % 4;
             if (Input.GetKeyDown(KeyCode.UpArrow) || Input.GetKeyDown(KeyCode.W) || menuMove < 0) menuIndex = (menuIndex + 3) % 4;
-            if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.Space) || Input.GetKeyDown(KeyCode.JoystickButton0))
-                ActivateMainMenu(menuIndex);
+            if (ConfirmPressed()) ActivateMainMenu(menuIndex);
         }
 
         static int MenuAxisStep(float axis, ref bool ready)
@@ -1651,6 +1698,7 @@ namespace SparkStrikers
 
         int ReadMenuVertical() => -MenuAxisStep(Input.GetAxisRaw("PadVertical"), ref menuVerticalReady);
         int ReadMenuHorizontal() => MenuAxisStep(Input.GetAxisRaw("PadHorizontal"), ref menuHorizontalReady);
+        static bool ConfirmPressed() => Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.Space) || Input.GetKeyDown(KeyCode.JoystickButton0);
 
         void ActivateMainMenu(int index)
         {
@@ -1695,8 +1743,7 @@ namespace SparkStrikers
                 CycleDifficulty(Input.GetKeyDown(KeyCode.LeftArrow) || volumeMove < 0 ? -1 : 1);
             }
 
-            bool confirm = Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.Space) || Input.GetKeyDown(KeyCode.JoystickButton0);
-            if (!confirm) return;
+            if (!ConfirmPressed()) return;
             if (menuIndex == 1)
             {
                 ToggleLanguage();
@@ -1707,18 +1754,15 @@ namespace SparkStrikers
             }
             else if (menuIndex == 3)
             {
-                shakeEnabled = !shakeEnabled;
-                PlayerPrefs.SetInt("screen_shake", shakeEnabled ? 1 : 0);
+                ToggleSetting(ref shakeEnabled, "screen_shake");
             }
             else if (menuIndex == 4)
             {
-                flashEnabled = !flashEnabled;
-                PlayerPrefs.SetInt("flash_effects", flashEnabled ? 1 : 0);
+                ToggleSetting(ref flashEnabled, "flash_effects");
             }
             else if (menuIndex == 5)
             {
-                highContrast = !highContrast;
-                PlayerPrefs.SetInt("high_contrast", highContrast ? 1 : 0);
+                ToggleSetting(ref highContrast, "high_contrast");
             }
             else if (menuIndex == 6)
             {
@@ -1728,6 +1772,12 @@ namespace SparkStrikers
             {
                 BackToMainMenu();
             }
+        }
+
+        static void ToggleSetting(ref bool value, string key)
+        {
+            value = !value;
+            PlayerPrefs.SetInt(key, value ? 1 : 0);
         }
 
         void ToggleLanguage()
@@ -1764,7 +1814,7 @@ namespace SparkStrikers
                 return;
             }
 
-            if (!Input.GetKeyDown(KeyCode.Return) && !Input.GetKeyDown(KeyCode.Space) && !Input.GetKeyDown(KeyCode.JoystickButton0)) return;
+            if (!ConfirmPressed()) return;
             if (confirmIndex == 0) ExecuteConfirmedAction();
             else CancelConfirmation();
         }
@@ -1812,14 +1862,19 @@ namespace SparkStrikers
                 rules.TogglePause();
                 return;
             }
-            if (!Input.GetKeyDown(KeyCode.Return) && !Input.GetKeyDown(KeyCode.Space) && !Input.GetKeyDown(KeyCode.JoystickButton0)) return;
-            if (menuIndex == 0) rules.TogglePause();
-            else if (menuIndex == 1)
+            if (ConfirmPressed()) ActivatePauseMenu(menuIndex);
+        }
+
+        void ActivatePauseMenu(int index)
+        {
+            menuIndex = index;
+            if (index == 0) rules.TogglePause();
+            else if (index == 1)
             {
                 menuPage = MenuPage.Settings;
                 menuIndex = 0;
             }
-            else if (menuIndex == 2) RequestConfirmation(ConfirmAction.RestartMatch);
+            else if (index == 2) RequestConfirmation(ConfirmAction.RestartMatch);
             else RequestConfirmation(ConfirmAction.ReturnToTitle);
         }
 
@@ -1827,8 +1882,13 @@ namespace SparkStrikers
         {
             if (Input.GetKeyDown(KeyCode.DownArrow) || Input.GetKeyDown(KeyCode.UpArrow) || Input.GetKeyDown(KeyCode.W) || Input.GetKeyDown(KeyCode.S) || ReadMenuVertical() != 0)
                 menuIndex = 1 - menuIndex;
-            if (!Input.GetKeyDown(KeyCode.Return) && !Input.GetKeyDown(KeyCode.Space) && !Input.GetKeyDown(KeyCode.JoystickButton0)) return;
-            if (menuIndex == 0)
+            if (ConfirmPressed()) ActivateResultsMenu(menuIndex);
+        }
+
+        void ActivateResultsMenu(int index)
+        {
+            menuIndex = index;
+            if (index == 0)
             {
                 if (cupOutcome == CupOutcome.Champion) StartCup();
                 else StartMatch();
@@ -1857,7 +1917,6 @@ namespace SparkStrikers
             bodyStyle.wordWrap = true;
             centeredBodyStyle = new GUIStyle(bodyStyle) { alignment = TextAnchor.MiddleCenter };
             buttonStyle = NewStyle(30, TextAnchor.MiddleCenter, FontStyle.Bold, Color.white);
-            buttonStyle.normal.textColor = Color.white;
             buttonStyle.hover.textColor = new Color(1f, 0.95f, 0.3f);
             buttonStyle.padding = new RectOffset(20, 20, 10, 10);
             hudStyle = NewStyle(38, TextAnchor.MiddleCenter, FontStyle.Bold, Color.white);
@@ -1957,18 +2016,15 @@ namespace SparkStrikers
                 CycleDifficulty(1);
             if (DrawButton(new Rect(610f, 485f, 700f, 64f), T("SCREEN SHAKE: ", "画面揺れ：") + ToggleText(shakeEnabled), menuIndex == 3))
             {
-                shakeEnabled = !shakeEnabled;
-                PlayerPrefs.SetInt("screen_shake", shakeEnabled ? 1 : 0);
+                ToggleSetting(ref shakeEnabled, "screen_shake");
             }
             if (DrawButton(new Rect(610f, 560f, 700f, 64f), T("FLASH EFFECTS: ", "全画面フラッシュ：") + ToggleText(flashEnabled), menuIndex == 4))
             {
-                flashEnabled = !flashEnabled;
-                PlayerPrefs.SetInt("flash_effects", flashEnabled ? 1 : 0);
+                ToggleSetting(ref flashEnabled, "flash_effects");
             }
             if (DrawButton(new Rect(610f, 635f, 700f, 64f), T("HIGH CONTRAST: ", "ハイコントラスト：") + ToggleText(highContrast), menuIndex == 5))
             {
-                highContrast = !highContrast;
-                PlayerPrefs.SetInt("high_contrast", highContrast ? 1 : 0);
+                ToggleSetting(ref highContrast, "high_contrast");
             }
             if (DrawButton(new Rect(610f, 710f, 700f, 64f), T("FULLSCREEN: ", "フルスクリーン：") + ToggleText(Screen.fullScreen), menuIndex == 6))
                 Screen.fullScreenMode = Screen.fullScreen ? FullScreenMode.Windowed : FullScreenMode.FullScreenWindow;
@@ -2013,18 +2069,7 @@ namespace SparkStrikers
             for (int i = 0; i < labels.Length; i++)
             {
                 Rect rect = new Rect(690f, 405f + i * 78f, 540f, 62f);
-                bool selected = menuIndex == i;
-                DrawRect(rect, selected ? homeColor : new Color(0.08f, 0.13f, 0.23f));
-                if (!GUI.Button(rect, (selected ? ">  " : string.Empty) + labels[i], buttonStyle)) continue;
-                menuIndex = i;
-                if (i == 0) rules.TogglePause();
-                else if (i == 1)
-                {
-                    menuPage = MenuPage.Settings;
-                    menuIndex = 0;
-                }
-                else if (i == 2) RequestConfirmation(ConfirmAction.RestartMatch);
-                else RequestConfirmation(ConfirmAction.ReturnToTitle);
+                if (DrawButton(rect, labels[i], menuIndex == i)) ActivatePauseMenu(i);
             }
         }
 
@@ -2062,8 +2107,7 @@ namespace SparkStrikers
             }
 
             Rect no = new Rect(690f, 590f, 540f, 66f);
-            DrawRect(no, confirmIndex == 1 ? homeColor : new Color(0.08f, 0.13f, 0.23f));
-            if (GUI.Button(no, (confirmIndex == 1 ? ">  " : string.Empty) + T("NO — GO BACK", "いいえ — もどる"), buttonStyle)) CancelConfirmation();
+            if (DrawButton(no, T("NO — GO BACK", "いいえ — もどる"), confirmIndex == 1)) CancelConfirmation();
         }
 
         void DrawResults()
@@ -2083,16 +2127,7 @@ namespace SparkStrikers
             for (int i = 0; i < labels.Length; i++)
             {
                 Rect rect = new Rect(690f, 510f + i * 88f, 540f, 66f);
-                bool selected = menuIndex == i;
-                DrawRect(rect, selected ? homeColor : new Color(0.08f, 0.13f, 0.23f));
-                if (!GUI.Button(rect, (selected ? ">  " : string.Empty) + labels[i], buttonStyle)) continue;
-                menuIndex = i;
-                if (i == 0)
-                {
-                    if (cupOutcome == CupOutcome.Champion) StartCup();
-                    else StartMatch();
-                }
-                else ReturnToTitle();
+                if (DrawButton(rect, labels[i], menuIndex == i)) ActivateResultsMenu(i);
             }
         }
 
